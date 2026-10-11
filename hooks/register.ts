@@ -21,23 +21,53 @@ async function subsOf($: any) {
   return ((await $.store.get('subs')) ?? DEFAULT_SUBS) as Sub[]
 }
 
-type Refreshed = { added: RedditHit[]; errors: string[] }
+type Refreshed = { added: RedditHit[]; errors: string[]; cancelled: boolean }
 let running: Promise<Refreshed> | null = null
-
-// The hourly poll and a typed command can start together; they share one run so no post is judged twice.
-const refresh = ($: any): Promise<Refreshed> => (running ??= scan($).finally(() => (running = null)))
+let runGen = -1
+// Bumped by /reddit off, clear and reset. A scan that sees it change stops; one that began before a wipe never writes.
+let gen = 0
+let wipedAt = 0
 
 const MAX_TRIES = 3
+const MAX_FAILS = 200
+
+// The hourly poll and a typed command can start together; they share one run so no post is judged twice.
+// A run that was cancelled or wiped is let finish first, then a fresh one starts.
+async function refresh($: any): Promise<Refreshed> {
+  while (running && runGen !== gen) await running.catch(() => {})
+  if (running) return running
+  runGen = gen
+  const p: Promise<Refreshed> = scan($, gen).finally(() => {
+    if (running === p) running = null
+  })
+  return (running = p)
+}
+
+// Stops any scan and waits for it, so what clear or reset writes next cannot be overwritten by it.
+async function wipe() {
+  wipedAt = ++gen
+  await running?.catch(() => {})
+}
 
 // One Haiku call per post never judged before; steady-state a poll only pays for new posts.
-async function scan($: any): Promise<Refreshed> {
+async function scan($: any, my: number): Promise<Refreshed> {
   const judged = new Set(((await $.store.get('judged')) ?? []) as string[])
   const hits = ((await $.store.get('hits')) ?? []) as RedditHit[]
   const fails = ((await $.store.get('fails')) ?? {}) as Record<string, number>
   let tokens = ((await $.store.get('tokens')) ?? { in: 0, out: 0 }) as { in: number; out: number }
   const added: RedditHit[] = []
   const errors: string[] = []
+  const stopped = () => gen !== my
+  // Retried on later polls, but not forever: a post the model never answers is given up on.
+  const fail = (id: string) => {
+    fails[id] = (fails[id] ?? 0) + 1
+    if (fails[id]! >= MAX_TRIES) {
+      delete fails[id]
+      judged.add(id)
+    }
+  }
   for (const s of await subsOf($)) {
+    if (stopped()) break
     try {
       const res = await $.http.fetch(feedUrl(s), { headers: { 'User-Agent': 'Mozilla/5.0 reddit-watch/0.2' } })
       if (!res.ok) {
@@ -45,17 +75,24 @@ async function scan($: any): Promise<Refreshed> {
         continue
       }
       for (const p of parse(res.text).filter(p => p.id && !judged.has(p.id))) {
-        const r = await $.model.complete({
-          model: 'haiku',
-          system: JUDGE,
-          prompt: `Title: ${p.title}\n\n${p.body}`,
-          maxTokens: 40,
-          effort: 'low',
-        })
+        if (stopped()) break
+        let r
+        try {
+          r = await $.model.complete({
+            model: 'haiku',
+            system: JUDGE,
+            prompt: `Title: ${p.title}\n\n${p.body}`,
+            maxTokens: 40,
+            effort: 'low',
+          })
+        } catch (err) {
+          errors.push(`r/${s.sub}: ${(err as Error).message}`)
+          fail(p.id)
+          continue
+        }
+        if (stopped()) break
         if (!r.isAnswered) {
-          // Retried on later polls, but not forever: a post the model never answers is given up on.
-          fails[p.id] = (fails[p.id] ?? 0) + 1
-          if (fails[p.id]! >= MAX_TRIES) judged.add(p.id)
+          fail(p.id)
           continue
         }
         delete fails[p.id]
@@ -67,17 +104,24 @@ async function scan($: any): Promise<Refreshed> {
       errors.push(`r/${s.sub}: ${(err as Error).message}`) // keep what earlier posts already cost
     }
   }
+  // After a clear or reset this scan's picture of the store is out of date, so it writes nothing.
+  if (my < wipedAt) return { added: [], errors, cancelled: true }
   const all = [...added, ...hits].slice(0, 200)
   await $.store.set('judged', [...judged].slice(-1500))
-  await $.store.set('fails', fails)
+  await $.store.set('fails', Object.fromEntries(Object.entries(fails).slice(-MAX_FAILS)))
   await $.store.set('hits', all)
   await $.store.set('tokens', tokens)
   await update($, items, () => all)
-  return { added, errors }
+  return { added, errors, cancelled: stopped() }
 }
 
 async function openPane($: any) {
   await $.ui.open({ id: PANE, title: 'Reddit watch' })
+}
+
+async function reloadHits($: any) {
+  const stored = ((await $.store.get('hits')) ?? []) as RedditHit[]
+  await update($, items, () => stored)
 }
 
 export const register: Register = on => {
@@ -87,19 +131,31 @@ export const register: Register = on => {
       description: 'Subreddit watch',
       argumentHint: '[reset | scan | on | off | add <sub> [flair] | remove <sub> | list | clear]',
     })
-    const stored = ((await $.store.get('hits')) ?? []) as RedditHit[]
-    await update($, items, () => stored)
+    await reloadHits($)
+    // Never rejects: a failure is shown to the user instead.
     const poll = async () => {
-      if (!(await $.store.get('enabled'))) return
       try {
-        const { added } = await refresh($)
+        if (!(await $.store.get('enabled'))) return
+        const { added, errors, cancelled } = await refresh($)
+        if (cancelled) return
+        if (errors.length) $.ui.toast(`Reddit watch: ${errors.join('; ')}`)
         if (!added.length) return
         $.ui.toast(`Reddit: ${added.length} new post(s) may help your Claude Code use`)
-        void openPane($) // seats only on a wide terminal; the toast covers the rest
-      } catch {}
+        await openPane($) // seats only on a wide terminal; the toast covers the rest
+      } catch (err) {
+        try {
+          $.ui.toast(`Reddit watch failed: ${(err as Error).message}`)
+        } catch {}
+      }
     }
     void poll() // on at session start: scan the latest posts now
     $.clock.every(HOUR, poll)
+    return next(e)
+  })
+
+  // /clear, /resume and /branch empty the pane's list without a new session.start; load the saved hits again.
+  on('classic.SessionStart', async ($, e, next) => {
+    if (e.source === 'clear' || e.source === 'resume' || e.source === 'fork') await reloadHits($)
     return next(e)
   })
 
@@ -109,8 +165,12 @@ export const register: Register = on => {
     try {
       if (verb === 'on' || verb === 'off') {
         await $.store.set('enabled', verb === 'on')
-        if (verb === 'off') return { text: 'Reddit watch off. No polling, no Haiku calls.' }
-        const { added, errors } = await refresh($)
+        if (verb === 'off') {
+          gen++ // a running scan stops before its next fetch, model call or notice
+          return { text: 'Reddit watch off. No polling, no Haiku calls.' }
+        }
+        const { added, errors, cancelled } = await refresh($)
+        if (cancelled) return { text: 'Reddit watch scan stopped.' }
         await openPane($)
         return { text: `Reddit watch on. Scanned the latest posts: ${added.length} relevant.${errors.length ? `\n${errors.join('\n')}` : ''}` }
       }
@@ -132,15 +192,18 @@ export const register: Register = on => {
         }
       }
       if (verb === 'reset') {
+        await wipe()
         await $.store.set('judged', [])
         await $.store.set('fails', {})
         await $.store.set('hits', [])
         await update($, items, () => [])
         if (!(await $.store.get('enabled'))) return { text: 'Judged posts cleared. /reddit on to rescan.' }
-        const { added, errors } = await refresh($)
+        const { added, errors, cancelled } = await refresh($)
+        if (cancelled) return { text: 'Reddit watch scan stopped.' }
         return { text: `Re-judged everything: ${added.length} relevant.${errors.length ? `\n${errors.join('\n')}` : ''}` }
       }
       if (verb === 'clear') {
+        await wipe()
         await $.store.set('hits', [])
         await update($, items, () => [])
         return { text: 'Cleared.' }
@@ -148,7 +211,8 @@ export const register: Register = on => {
       await openPane($)
       if (verb !== 'scan') return { text: 'Pane opened. /reddit scan fetches new posts.' }
       if (!(await $.store.get('enabled'))) return { text: 'Reddit watch is off. /reddit on to start.' }
-      const { added, errors } = await refresh($)
+      const { added, errors, cancelled } = await refresh($)
+      if (cancelled) return { text: 'Reddit watch scan stopped.' }
       return { text: `${added.length} new relevant post(s).${errors.length ? `\n${errors.join('\n')}` : ''}` }
     } catch (err) {
       return { text: `reddit-watch failed: ${(err as Error).message}` }

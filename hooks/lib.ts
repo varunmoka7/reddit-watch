@@ -19,12 +19,26 @@ export function parseSub(args: string): Sub | null {
   return /^[A-Za-z0-9_]{2,21}$/.test(sub) ? { sub, ...(flair.length && { flair: flair.join(' ') }) } : null
 }
 
+const NAMED: Record<string, string> = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', hellip: '…', mdash: '—', ndash: '–',
+  lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', copy: '©',
+}
+
+// "AT&amp;T", "&#39;", "&#x27;" -> the characters they stand for. One pass, so "&amp;lt;" becomes "&lt;", not "<".
+export const decode = (s: string) =>
+  s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, c: string) => {
+    if (c[0] !== '#') return NAMED[c.toLowerCase()] ?? m
+    const n = c[1]?.toLowerCase() === 'x' ? parseInt(c.slice(2), 16) : parseInt(c.slice(1), 10)
+    return n > 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : m
+  })
+
 export function parse(xml: string): (Post & { body: string })[] {
   const tag = (s: string, t: string) => s.match(new RegExp(`<${t}[^>]*>([\\s\\S]*?)</${t}>`))?.[1] ?? ''
   return [...xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)].map(([, e = '']) => ({
     id: tag(e, 'id'),
-    title: tag(e, 'title').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'"),
-    link: e.match(/<link[^>]*href="([^"]+)"/)?.[1] ?? '',
-    body: tag(e, 'content').replace(/&lt;[^]*?&gt;/g, ' ').replace(/\s+/g, ' ').slice(0, 600),
+    title: decode(tag(e, 'title')),
+    link: decode(e.match(/<link[^>]*href="([^"]+)"/)?.[1] ?? ''),
+    // The content is HTML written as XML text: decode it to real HTML, drop the tags, then decode the page's own entities.
+    body: decode(decode(tag(e, 'content')).replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim().slice(0, 600),
   }))
 }
