@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "reddit-watch",
+  "owner": { "name": "Varun Moka", "url": "https://github.com/varunmoka7" },
+  "plugins": [
+    {
+      "name": "reddit-watch",
+      "description": "Watches subreddits you choose and lists posts that could improve your Claude Code use, in a side pane. Off until you turn it on.",
+      "author": { "name": "Varun Moka", "url": "https://github.com/varunmoka7" },
+      "source": "./",
+      "homepage": "https://github.com/varunmoka7/reddit-watch",
+      "category": "productivity",
+      "tags": ["reddit", "claude-code-mod", "discovery"]
+    }
+  ]
+}

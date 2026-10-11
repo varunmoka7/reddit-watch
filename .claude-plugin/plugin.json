@@ -1,0 +1,11 @@
+{
+  "name": "reddit-watch",
+  "version": "0.3.0",
+  "description": "Watches subreddits you choose, has Claude's small model (Haiku) pick out posts that could improve your Claude Code use, and lists them with links in a side pane. Off until you turn it on.",
+  "author": { "name": "Varun Moka", "url": "https://github.com/varunmoka7" },
+  "license": "MIT",
+  "homepage": "https://github.com/varunmoka7/reddit-watch",
+  "repository": "https://github.com/varunmoka7/reddit-watch",
+  "keywords": ["claude-code", "claude-code-mod", "claude-code-plugin", "function-hooks", "reddit"],
+  "types": "./types/index.d.ts"
+}
