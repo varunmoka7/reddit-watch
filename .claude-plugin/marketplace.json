@@ -1,6 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "reddit-watch",
+  "description": "A Claude Code mod that lists Reddit posts that could improve your Claude Code use.",
   "owner": { "name": "Varun Moka", "url": "https://github.com/varunmoka7" },
   "plugins": [
     {
