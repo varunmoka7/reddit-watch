@@ -9,7 +9,7 @@
       "description": "Watches subreddits you choose and lists posts that could improve your Claude Code use, in a side pane. Off until you turn it on.",
       "author": { "name": "Varun Moka", "url": "https://github.com/varunmoka7" },
       "source": "./",
-      "homepage": "https://github.com/varunmoka7/reddit-watch",
+      "homepage": "https://github.com/moka-apps/reddit-watch",
       "category": "productivity",
       "tags": ["reddit", "claude-code-mod", "discovery"]
     }

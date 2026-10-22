@@ -1,4 +1,13 @@
-# reddit-watch
+<p align="center">
+  <img src="assets/banner.svg" alt="reddit-watch: Subreddit posts that could improve your Claude Code setup." width="100%">
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/moka-apps/reddit-watch?style=flat-square&color=111111" alt="License"></a>
+  <a href="https://github.com/moka-apps"><img src="https://img.shields.io/badge/moka--apps-Claude_Code_mod-e3b341?style=flat-square" alt="moka-apps, Claude Code mod"></a>
+</p>
+
+---
 
 A Claude Code mod (an add-on that changes how Claude Code behaves) that watches subreddits you pick and shows the posts that could improve how you use Claude Code, in a side pane with links.
 
@@ -11,7 +20,7 @@ Good Claude Code tricks (a way to save notes between sessions, a way to use fewe
 Type these two lines in a terminal (not inside Claude Code):
 
 ```
-claude plugin marketplace add varunmoka7/reddit-watch
+claude plugin marketplace add moka-apps/reddit-watch
 claude plugin install reddit-watch@reddit-watch
 ```
 
